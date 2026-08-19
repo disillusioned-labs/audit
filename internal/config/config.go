@@ -30,7 +30,6 @@ import (
 // Config is the root of all application settings, one field per subsystem.
 type Config struct {
 	Service  ServiceConfig  `mapstructure:"service"`
-	Pprof    PprofConfig    `mapstructure:"pprof"`
 	Postgres PostgresConfig `mapstructure:"postgres"`
 	Kafka    KafkaConfig    `mapstructure:"kafka"`
 	OTel     OTelConfig     `mapstructure:"otel"`
