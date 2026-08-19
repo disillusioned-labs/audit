@@ -150,7 +150,11 @@ func RunConsumer(cfg *config.Config) error {
 	// -------------------------------------------------------------------------
 	// Kafka
 	// -------------------------------------------------------------------------
-	kafkaOpts := kafka.ConsumerGroup(cfg.Kafka.ConsumerGroup)
+	kafkaOpts := []kafka.Option{
+		kgo.ConsumerGroup(cfg.Kafka.ConsumerGroup),
+		kgo.ConsumeTopics(".*"),
+		kgo.ConsumeRegex(),
+	}
 
 	kafkaClient, err := kafka.New(
 		ctx,

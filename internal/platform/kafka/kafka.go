@@ -118,7 +118,5 @@ func Close(client *kgo.Client) {
 //	    kafka.ConsumerGroup("identity-consumer", "user.created"),
 //	)
 func ConsumerGroup(group string) []Option {
-	return []Option{
-		kgo.ConsumerGroup(group),
-	}
+	return []Option{}
 }
