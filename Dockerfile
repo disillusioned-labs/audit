@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
         -X github.com/disillusioned-labs/audit/internal/app.version=${VERSION} \
         -X github.com/disillusioned-labs/audit/internal/app.commit=${COMMIT} \
         -X github.com/disillusioned-labs/audit/internal/app.buildDate=${BUILD_DATE}" \
-      -o /out/consumer ./cmd/consumer && \
+      -o /out/consumer ./cmd/consumer
 
 # ---------------------------------------------------------------------------
 # Runtime image
