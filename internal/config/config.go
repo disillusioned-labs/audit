@@ -332,6 +332,10 @@ func (c *Config) validate() error {
 		fail("kafka.client_id must not be empty")
 	}
 
+	if strings.TrimSpace(c.Kafka.ConsumerGroup) == "" {
+		fail("kafka.consumer_group must not be empty")
+	}
+
 	if c.Kafka.RecordRetries < 0 {
 		fail(
 			"kafka.record_retries must be >= 0, got %d",
@@ -437,7 +441,7 @@ func validateOTLPEndpoint(endpoint string) error {
 // AutomaticEnv only resolves keys it already knows, so an unregistered key
 // would be invisible even when its variable is set.
 func setDefaults(v *viper.Viper) {
-	v.SetDefault("service.name", "identity")
+	v.SetDefault("service.name", "audit")
 	v.SetDefault("service.env", EnvDevelopment)
 
 	v.SetDefault("postgres.dsn", "postgres://app:app@localhost:5433/app?sslmode=disable")
@@ -448,7 +452,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("postgres.query_exec_mode", "cache_statement")
 
 	v.SetDefault("kafka.brokers", []string{"localhost:9092"})
-	v.SetDefault("kafka.client_id", "identity")
+	v.SetDefault("kafka.client_id", "audit")
+	v.SetDefault("kafka.consumer_group", "audit-consumer-group")
 	v.SetDefault("kafka.record_retries", int64(5))
 	v.SetDefault("kafka.record_delivery_timeout", "30s")
 	v.SetDefault("kafka.ping_timeout", "5s")

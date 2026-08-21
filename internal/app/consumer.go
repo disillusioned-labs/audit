@@ -1,5 +1,4 @@
 // Package app owns the application lifecycle: bootstrap infrastructure,
-// wire dependencies (see di.go), serve, and shut down gracefully.
 package app
 
 import (
@@ -186,6 +185,9 @@ func RunConsumer(cfg *config.Config) error {
 	g, runCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
+		log.Info(
+			"kafka start",
+		)
 		for {
 			fetches := kafkaConsumer.Poll(runCtx)
 

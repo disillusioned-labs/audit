@@ -109,14 +109,3 @@ func Close(client *kgo.Client) {
 
 	client.Close()
 }
-
-// ConsumerGroup creates the options required to configure a consumer group.
-//
-// Example:
-//
-//	client, err := kafka.New(ctx, cfg.Kafka,
-//	    kafka.ConsumerGroup("identity-consumer", "user.created"),
-//	)
-func ConsumerGroup(group string) []Option {
-	return []Option{}
-}
