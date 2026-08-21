@@ -32,3 +32,5 @@ FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 WORKDIR /app
 
 COPY --from=build /out/consumer ./consumer
+
+ENTRYPOINT ["/app/consumer"]
