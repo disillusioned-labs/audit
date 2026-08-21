@@ -1,5 +1,5 @@
 services:
-  api:
+  consumer:
     container_name: audit-consumer
     build:
       context: .
