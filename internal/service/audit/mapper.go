@@ -1,7 +1,9 @@
 package audit
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/netip"
 	"strconv"
 
 	"github.com/disillusioned-labs/audit/internal/platform/kafka"
@@ -52,18 +54,25 @@ func MapKafkaRecordToCreateAuditEventInput(
 		return CreateAuditEventInput{}, err
 	}
 
+	var recordData map[string]string
+	err = json.Unmarshal(record.Value, &recordData)
+	if err != nil {
+		return CreateAuditEventInput{}, err
+	}
+
 	return CreateAuditEventInput{
 		EventID:       eventID,
 		EventType:     record.Topic,
 		EventVersion:  eventVersion,
 		SourceService: sourceService,
-
 		AggregateType: aggregateType,
 		AggregateID:   aggregateID,
 
+		IPAddress: parseIP(recordData["ip_address"]),
+		UserAgent: optionalString(recordData["user_agent"]),
+
 		// Optional event metadata.
 		TraceID: optionalStringHeader(record, "trace-id"),
-
 		// Event-specific payload.
 		Details: record.Value,
 	}, nil
@@ -136,4 +145,25 @@ func optionalStringHeader(
 	}
 
 	return &value
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+
+	return &value
+}
+
+func parseIP(value string) *netip.Addr {
+	if value == "" {
+		return nil
+	}
+
+	ip, err := netip.ParseAddr(value)
+	if err != nil {
+		return nil
+	}
+
+	return &ip
 }
