@@ -1,4 +1,4 @@
-package audit
+package consumer
 
 import (
 	"encoding/json"
@@ -6,60 +6,71 @@ import (
 	"net/netip"
 	"strconv"
 
+	"github.com/disillusioned-labs/audit/internal/service/audit"
 	"github.com/disillusioned-labs/platform/kafka"
 	"github.com/google/uuid"
 )
 
-func MapKafkaRecordToCreateAuditEventInput(
+const (
+	headerEventID       = "event-id"
+	headerEventVersion  = "event-version"
+	headerSourceService = "source-service"
+	headerAggregateType = "aggregate-type"
+	headerAggregateID   = "aggregate-id"
+)
+
+func decodeAuditEvent(
 	record kafka.Record,
-) (CreateAuditEventInput, error) {
+) (audit.CreateAuditEventInput, error) {
 	if record.Topic == "" {
-		return CreateAuditEventInput{}, fmt.Errorf(
-			"kafka record topic must not be empty",
+		return audit.CreateAuditEventInput{}, fmt.Errorf(
+			"kafka record topic is empty",
 		)
 	}
 
-	eventID, err := requiredUUIDHeader(record.Headers, "event-id")
+	eventID, err := requiredUUIDHeader(record.Headers, headerEventID)
 	if err != nil {
-		return CreateAuditEventInput{}, err
+		return audit.CreateAuditEventInput{}, err
 	}
 
-	eventVersion, err := requiredIntHeader(record.Headers, "event-version")
+	eventVersion, err := requiredIntHeader(record.Headers, headerEventVersion)
 	if err != nil {
-		return CreateAuditEventInput{}, err
+		return audit.CreateAuditEventInput{}, err
 	}
 
-	sourceService, err := requiredStringHeader(
+	sourceService, err := requiredHeader(
 		record.Headers,
-		"source-service",
+		headerSourceService,
 	)
 	if err != nil {
-		return CreateAuditEventInput{}, err
+		return audit.CreateAuditEventInput{}, err
 	}
 
-	aggregateType, err := requiredStringHeader(
+	aggregateType, err := requiredHeader(
 		record.Headers,
-		"aggregate-type",
+		headerAggregateType,
 	)
 	if err != nil {
-		return CreateAuditEventInput{}, err
+		return audit.CreateAuditEventInput{}, err
 	}
 
 	aggregateID, err := requiredUUIDHeader(
 		record.Headers,
-		"aggregate-id",
+		headerAggregateID,
 	)
 	if err != nil {
-		return CreateAuditEventInput{}, err
+		return audit.CreateAuditEventInput{}, err
 	}
 
 	var recordData map[string]string
-	err = json.Unmarshal(record.Value, &recordData)
-	if err != nil {
-		return CreateAuditEventInput{}, err
+	if err := json.Unmarshal(record.Value, &recordData); err != nil {
+		return audit.CreateAuditEventInput{}, fmt.Errorf(
+			"unmarshal record value: %w",
+			err,
+		)
 	}
 
-	return CreateAuditEventInput{
+	return audit.CreateAuditEventInput{
 		EventID:       eventID,
 		EventType:     record.Topic,
 		EventVersion:  eventVersion,
@@ -70,21 +81,20 @@ func MapKafkaRecordToCreateAuditEventInput(
 		IPAddress: parseIP(recordData["ip_address"]),
 		UserAgent: optionalString(recordData["user_agent"]),
 
-		// Optional event metadata.
-		TraceID: optionalStringHeader(record.Headers, "trace-id"),
-		// Event-specific payload.
+		TraceID: optionalHeader(record.Headers, "trace-id"),
+
 		Details: record.Value,
 	}, nil
 }
 
-func requiredStringHeader(
+func requiredHeader(
 	headers []kafka.RecordHeader,
 	key string,
 ) (string, error) {
 	value, ok := kafka.HeaderString(headers, key)
 	if !ok || value == "" {
 		return "", fmt.Errorf(
-			"missing required kafka header %q",
+			"missing required header %q",
 			key,
 		)
 	}
@@ -96,7 +106,7 @@ func requiredUUIDHeader(
 	headers []kafka.RecordHeader,
 	key string,
 ) (uuid.UUID, error) {
-	value, err := requiredStringHeader(headers, key)
+	value, err := requiredHeader(headers, key)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -104,7 +114,7 @@ func requiredUUIDHeader(
 	id, err := uuid.Parse(value)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf(
-			"invalid kafka header %q: %w",
+			"invalid header %q: %w",
 			key,
 			err,
 		)
@@ -117,7 +127,7 @@ func requiredIntHeader(
 	headers []kafka.RecordHeader,
 	key string,
 ) (int, error) {
-	value, err := requiredStringHeader(headers, key)
+	value, err := requiredHeader(headers, key)
 	if err != nil {
 		return 0, err
 	}
@@ -125,7 +135,7 @@ func requiredIntHeader(
 	version, err := strconv.Atoi(value)
 	if err != nil {
 		return 0, fmt.Errorf(
-			"invalid kafka header %q: %w",
+			"invalid header %q: %w",
 			key,
 			err,
 		)
@@ -134,7 +144,7 @@ func requiredIntHeader(
 	return version, nil
 }
 
-func optionalStringHeader(
+func optionalHeader(
 	headers []kafka.RecordHeader,
 	key string,
 ) *string {

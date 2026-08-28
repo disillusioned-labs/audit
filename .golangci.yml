@@ -65,3 +65,4 @@ formatters:
     goimports:
       local-prefixes:
         - github.com/disillusioned-labs/audit
+        - github.com/disillusioned-labs/platform

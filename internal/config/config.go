@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/viper"
 )
 
@@ -42,8 +44,9 @@ type Config struct {
 // and SERVICE_ENV. Bare NAME and ENV are the two most collision-prone names in
 // an unprefixed environment - generic enough that unrelated tooling sets them.
 type ServiceConfig struct {
-	Name string `mapstructure:"name"`
-	Env  string `mapstructure:"env"`
+	Name       string `mapstructure:"name"`
+	Env        string `mapstructure:"env"`
+	InstanceID string `mapstructure:"instance_id"`
 }
 
 // Env values accepted in SERVICE_ENV; they gate log formatting defaults and are
@@ -132,9 +135,14 @@ type KafkaConfig struct {
 	Brokers               []string      `mapstructure:"brokers"`
 	ClientID              string        `mapstructure:"client_id"`
 	ConsumerGroup         string        `mapstructure:"consumer_group"`
+	ConsumerTopics        []string      `mapstructure:"consumer_topics"`
+	DLQTopic              string        `mapstructure:"dlq_topic"`
 	RecordRetries         int64         `mapstructure:"record_retries"`
 	RecordDeliveryTimeout time.Duration `mapstructure:"record_delivery_timeout"`
 	PingTimeout           time.Duration `mapstructure:"ping_timeout"`
+	RetryMaxAttempts      int           `mapstructure:"retry_max_attempts"`
+	RetryInitialDelay     time.Duration `mapstructure:"retry_initial_delay"`
+	RetryMaxDelay         time.Duration `mapstructure:"retry_max_delay"`
 }
 
 // OTelConfig controls OTLP export of traces and metrics.
@@ -273,6 +281,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 	cfg.Kafka.Brokers = normalizeKafkaBrokers(cfg.Kafka.Brokers)
+	cfg.Kafka.ConsumerTopics = normalizeKafkaTopics(cfg.Kafka.ConsumerTopics)
+	cfg.Service.InstanceID = instanceID()
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
@@ -334,6 +344,51 @@ func (c *Config) validate() error {
 
 	if strings.TrimSpace(c.Kafka.ConsumerGroup) == "" {
 		fail("kafka.consumer_group must not be empty")
+	}
+
+	seen := make(map[string]struct{}, len(c.Kafka.ConsumerTopics))
+
+	for i, topic := range c.Kafka.ConsumerTopics {
+		topic = strings.TrimSpace(topic)
+
+		if topic == "" {
+			fail("kafka.consumer_topics[%d] must not be empty", i)
+			continue
+		}
+
+		if _, exists := seen[topic]; exists {
+			fail("kafka.consumer_topics[%d] is duplicated: %q", i, topic)
+		}
+
+		seen[topic] = struct{}{}
+
+		if topic == c.Kafka.DLQTopic {
+			fail(
+				"kafka.consumer_topics[%d] must be different from kafka.dlq_topic",
+				i,
+			)
+		}
+	}
+
+	if strings.TrimSpace(c.Kafka.DLQTopic) == "" {
+		fail("kafka.dlq_topic must not be empty")
+	}
+
+	if c.Kafka.RetryMaxAttempts < 1 {
+		fail("kafka.retry_max_attempts must be >= 1, got %d", c.Kafka.RetryMaxAttempts)
+	}
+
+	if c.Kafka.RetryInitialDelay <= 0 {
+		fail("kafka.retry_initial_delay must be > 0, got %s", c.Kafka.RetryInitialDelay)
+	}
+
+	if c.Kafka.RetryMaxDelay <= 0 {
+		fail("kafka.retry_max_delay must be > 0, got %s", c.Kafka.RetryMaxDelay)
+	}
+
+	if c.Kafka.RetryMaxDelay < c.Kafka.RetryInitialDelay {
+		fail("kafka.retry_max_delay (%s) must be >= kafka.retry_initial_delay (%s)",
+			c.Kafka.RetryMaxDelay, c.Kafka.RetryInitialDelay)
 	}
 
 	if c.Kafka.RecordRetries < 0 {
@@ -454,9 +509,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kafka.brokers", []string{"localhost:9092"})
 	v.SetDefault("kafka.client_id", "audit")
 	v.SetDefault("kafka.consumer_group", "audit-consumer-group")
+	v.SetDefault("kafka.consumer_topic", "audit")
+	v.SetDefault("kafka.dlq_topic", "audit.dlq")
 	v.SetDefault("kafka.record_retries", int64(5))
 	v.SetDefault("kafka.record_delivery_timeout", "30s")
 	v.SetDefault("kafka.ping_timeout", "5s")
+	v.SetDefault("kafka.retry_max_attempts", 3)
+	v.SetDefault("kafka.retry_initial_delay", "1s")
+	v.SetDefault("kafka.retry_max_delay", "30s")
 
 	v.SetDefault("otel.sdk_disabled", false)
 	v.SetDefault("otel.traces_exporter", OTelExporterOTLP)
@@ -489,4 +549,27 @@ func normalizeKafkaBrokers(brokers []string) []string {
 	}
 
 	return result
+}
+
+func normalizeKafkaTopics(topics []string) []string {
+	var result []string
+
+	for _, value := range topics {
+		for topic := range strings.SplitSeq(value, ",") {
+			topic = strings.TrimSpace(topic)
+			if topic != "" {
+				result = append(result, topic)
+			}
+		}
+	}
+
+	return result
+}
+
+func instanceID() string {
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		return hostname
+	}
+
+	return uuid.NewString()
 }

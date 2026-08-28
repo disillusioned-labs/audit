@@ -11,13 +11,17 @@ import (
 	"time"
 
 	"github.com/disillusioned-labs/audit/internal/config"
-	"github.com/disillusioned-labs/audit/internal/platform/kafka"
-	"github.com/disillusioned-labs/audit/internal/platform/postgres"
-	"github.com/disillusioned-labs/audit/internal/platform/telemetry"
+	"github.com/disillusioned-labs/audit/internal/consumer"
 	"github.com/disillusioned-labs/audit/internal/repository"
 	"github.com/disillusioned-labs/audit/internal/service/audit"
-	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/disillusioned-labs/platform/kafka"
+	"github.com/disillusioned-labs/platform/postgres"
+	"github.com/disillusioned-labs/platform/retry"
+	"github.com/disillusioned-labs/platform/telemetry"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/sync/errgroup"
+
+	migrations "github.com/disillusioned-labs/audit/db/migrations"
 )
 
 // otelFlushTimeout bounds the trace flush at exit: if the OTLP collector is
@@ -140,7 +144,7 @@ func RunConsumer(cfg *config.Config) error {
 	log.Info("connected to postgres", "postgres", cfg.Postgres)
 
 	if cfg.Postgres.Migrate {
-		if err := postgres.Migrate(ctx, pool, log); err != nil {
+		if err := postgres.Migrate(ctx, pool, migrations.FS, log); err != nil {
 			return fmt.Errorf("run migrations: %w", err)
 		}
 	}
@@ -149,17 +153,27 @@ func RunConsumer(cfg *config.Config) error {
 	// -------------------------------------------------------------------------
 	// Kafka
 	// -------------------------------------------------------------------------
-	kafkaOpts := []kafka.Option{
-		kgo.ConsumerGroup(cfg.Kafka.ConsumerGroup),
-		kgo.ConsumeTopics(".*"),
-		kgo.ConsumeRegex(),
+	kafkaCfg := kafka.KafkaConfig{
+		Brokers:     cfg.Kafka.Brokers,
+		ClientID:    cfg.Kafka.ClientID,
+		PingTimeout: cfg.Kafka.PingTimeout,
+		Producer: kafka.ProducerConfig{
+			RecordRetries:         cfg.Kafka.RecordRetries,
+			RecordDeliveryTimeout: cfg.Kafka.RecordDeliveryTimeout,
+		},
+		Consumer: kafka.ConsumerConfig{
+			Group:    cfg.Kafka.ConsumerGroup,
+			Topics:   cfg.Kafka.ConsumerTopics,
+			DLQTopic: cfg.Kafka.DLQTopic,
+			Retry: kafka.RetryConfig{
+				MaxAttempts:  cfg.Kafka.RetryMaxAttempts,
+				InitialDelay: cfg.Kafka.RetryInitialDelay,
+				MaxDelay:     cfg.Kafka.RetryMaxDelay,
+			},
+		},
 	}
 
-	kafkaClient, err := kafka.New(
-		ctx,
-		cfg.Kafka,
-		kafkaOpts...,
-	)
+	kafkaClient, err := kafka.New(ctx, kafkaCfg)
 	if err != nil {
 		return fmt.Errorf("connect kafka: %w", err)
 	}
@@ -170,9 +184,36 @@ func RunConsumer(cfg *config.Config) error {
 		"brokers", cfg.Kafka.Brokers,
 		"client_id", cfg.Kafka.ClientID,
 		"consumer_group", cfg.Kafka.ConsumerGroup,
+		"topic", cfg.Kafka.ConsumerTopics,
+		"topic_dlq", cfg.Kafka.DLQTopic,
 	)
 
 	kafkaConsumer := kafka.NewConsumer(kafkaClient)
+	kafkaProducer := kafka.NewProducer(kafkaClient)
+	dlqPublisher := kafka.NewDLQPublisher(kafkaProducer, kafkaCfg.Consumer.DLQTopic, log)
+
+	// -------------------------------------------------------------------------
+	// Metrics
+	// -------------------------------------------------------------------------
+	meter := otel.Meter("audit/consumer")
+
+	consumerMetrics, err := consumer.NewConsumerMetrics(meter)
+	if err != nil {
+		return fmt.Errorf("create consumer metrics: %w", err)
+	}
+
+	// -------------------------------------------------------------------------
+	// Retry
+	// -------------------------------------------------------------------------
+	retryPolicy := retry.RetryPolicy{
+		MaxAttempts:  kafkaCfg.Consumer.Retry.MaxAttempts,
+		InitialDelay: kafkaCfg.Consumer.Retry.InitialDelay,
+		MaxDelay:     kafkaCfg.Consumer.Retry.MaxDelay,
+	}
+
+	if err := retryPolicy.Validate(); err != nil {
+		return fmt.Errorf("validate consumer retry policy: %w", err)
+	}
 
 	// -------------------------------------------------------------------------
 	// Service
@@ -180,121 +221,21 @@ func RunConsumer(cfg *config.Config) error {
 	auditService := audit.NewAuditService(repo, log)
 
 	// -------------------------------------------------------------------------
-	// Run
+	// Consumer
 	// -------------------------------------------------------------------------
+	consumer := consumer.NewConsumer(
+		kafkaConsumer,
+		dlqPublisher,
+		auditService,
+		retryPolicy,
+		consumerMetrics,
+		log,
+	)
+
 	g, runCtx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
-		log.Info(
-			"kafka start",
-		)
-		for {
-			fetches := kafkaConsumer.Poll(runCtx)
-
-			if fetches.IsClientClosed() {
-				log.Info("kafka consumer closed")
-				return nil
-			}
-
-			if err := fetches.Err0(); err != nil {
-				log.Error(
-					"kafka poll failed",
-					"error", err,
-				)
-
-				return fmt.Errorf("poll kafka: %w", err)
-			}
-
-			var processed []*kgo.Record
-
-			fetches.EachRecord(func(record *kgo.Record) {
-				log.Info(
-					"kafka record received",
-					"topic", record.Topic,
-					"partition", record.Partition,
-					"offset", record.Offset,
-					"key", string(record.Key),
-				)
-
-				input, err := audit.MapKafkaRecordToCreateAuditEventInput(
-					record,
-				)
-				if err != nil {
-					log.Error(
-						"map kafka record failed",
-						"error", err,
-						"topic", record.Topic,
-						"partition", record.Partition,
-						"offset", record.Offset,
-					)
-
-					// TODO: publish record to DLQ.
-					return
-				}
-
-				log.Info(
-					"kafka record mapped",
-					"event_id", input.EventID,
-					"event_type", input.EventType,
-					"event_version", input.EventVersion,
-					"source_service", input.SourceService,
-					"aggregate_type", input.AggregateType,
-					"aggregate_id", input.AggregateID,
-				)
-
-				if err := auditService.Create(runCtx, input); err != nil {
-					log.Error(
-						"create audit event failed",
-						"error", err,
-						"event_id", input.EventID,
-						"event_type", input.EventType,
-						"aggregate_type", input.AggregateType,
-						"aggregate_id", input.AggregateID,
-						"topic", record.Topic,
-						"partition", record.Partition,
-						"offset", record.Offset,
-					)
-
-					// TODO: publish record to DLQ.
-					return
-				}
-
-				log.Info(
-					"audit event created",
-					"event_id", input.EventID,
-					"event_type", input.EventType,
-					"aggregate_type", input.AggregateType,
-					"aggregate_id", input.AggregateID,
-				)
-
-				processed = append(processed, record)
-			})
-
-			if len(processed) == 0 {
-				continue
-			}
-
-			if err := kafkaConsumer.CommitRecords(
-				runCtx,
-				processed...,
-			); err != nil {
-				log.Error(
-					"commit kafka records failed",
-					"error", err,
-					"records", len(processed),
-				)
-
-				return fmt.Errorf(
-					"commit processed kafka records: %w",
-					err,
-				)
-			}
-
-			log.Info(
-				"kafka records committed",
-				"records", len(processed),
-			)
-		}
+		return consumer.Run(runCtx)
 	})
 
 	<-runCtx.Done()
@@ -308,7 +249,6 @@ func RunConsumer(cfg *config.Config) error {
 
 	stop()
 
-	// Worker.Run observes runCtx cancellation and exits gracefully.
 	if err := g.Wait(); err != nil {
 		return err
 	}

@@ -14,7 +14,7 @@ SQLC  := CGO_ENABLED=0 go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
 # Points at the native Postgres this machine develops against. Override it to
 # reach the containerised one from docker-compose (host port 5433):
 #   make migrate-up DB_DSN=postgres://identity_app:devpassword@localhost:5433/identity?sslmode=disable
-DB_DSN ?= postgres://identity_app:devpassword@vps:5433/identity?sslmode=disable
+DB_DSN ?= postgres://identity_app:devpassword@localhost:5432/identity?sslmode=disable
 
 # Build provenance, matching the Dockerfile's ldflags so a local binary reports
 # the same fields as a container one.
@@ -83,36 +83,6 @@ docker-build: ## Build the production application image
 		-t identity:$(VERSION) \
 		-t identity:latest \
 		.
-
-generate-signing-key: ## Generate the initial signing key
-	docker build \
-		--target signing-key \
-		--build-arg VERSION=$(VERSION) \
-		--build-arg COMMIT=$(COMMIT) \
-		--build-arg BUILD_DATE=$(BUILD_DATE) \
-		-t $(SIGNING_KEY_IMAGE) \
-		.
-
-	docker run --rm \
-		--network data \
-		--env-file .env.compose \
-		$(SIGNING_KEY_IMAGE)
-
-rotate-signing-key: ## Rotate the active signing key
-	docker build \
-		--target signing-key \
-		--build-arg VERSION=$(VERSION) \
-		--build-arg COMMIT=$(COMMIT) \
-		--build-arg BUILD_DATE=$(BUILD_DATE) \
-		-t $(SIGNING_KEY_IMAGE) \
-		.
-
-	docker run --rm \
-		--network data \
-		--env-file .env.compose \
-		$(SIGNING_KEY_IMAGE) \
-		--rotate
-
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
