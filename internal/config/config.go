@@ -509,7 +509,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kafka.brokers", []string{"localhost:9092"})
 	v.SetDefault("kafka.client_id", "audit")
 	v.SetDefault("kafka.consumer_group", "audit-consumer-group")
-	v.SetDefault("kafka.consumer_topic", "audit")
+	v.SetDefault("kafka.consumer_topics", "audit")
 	v.SetDefault("kafka.dlq_topic", "audit.dlq")
 	v.SetDefault("kafka.record_retries", int64(5))
 	v.SetDefault("kafka.record_delivery_timeout", "30s")
