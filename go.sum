@@ -5,8 +5,8 @@ github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XL
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/disillusioned-labs/platform v0.1.1 h1:Tts6M+Lev412E3uhsr27vu6sLtcPewBlBWd0FBTT0tc=
-github.com/disillusioned-labs/platform v0.1.1/go.mod h1:4gzciTSFSiJoqxFu2e55DHITDc/OhWepAT4y9qc1bbM=
+github.com/disillusioned-labs/platform v0.1.2 h1:g/AV+icpa2qjncakm2Iz0mYbSl10zfS/9oOkV24fmOM=
+github.com/disillusioned-labs/platform v0.1.2/go.mod h1:DdKU0SO5Gd+vMU/KtSVBvgQHCaYiMh3q8gxTizbNchM=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/exaring/otelpgx v0.11.1 h1:pE79fIg/qh/Lpu00kvswFC5dKfqyJJhMJ4Y4N3w5Lj4=

@@ -158,17 +158,17 @@ func RunConsumer(cfg *config.Config) error {
 		ClientID:    cfg.Kafka.ClientID,
 		PingTimeout: cfg.Kafka.PingTimeout,
 		Producer: kafka.ProducerConfig{
-			RecordRetries:         cfg.Kafka.RecordRetries,
-			RecordDeliveryTimeout: cfg.Kafka.RecordDeliveryTimeout,
+			RecordRetries:         cfg.Kafka.Producer.RecordRetries,
+			RecordDeliveryTimeout: cfg.Kafka.Producer.RecordDeliveryTimeout,
 		},
 		Consumer: kafka.ConsumerConfig{
-			Group:    cfg.Kafka.ConsumerGroup,
-			Topics:   cfg.Kafka.ConsumerTopics,
-			DLQTopic: cfg.Kafka.DLQTopic,
+			Group:    cfg.Kafka.Consumer.Group,
+			Topics:   cfg.Kafka.Consumer.Topics,
+			DLQTopic: cfg.Kafka.Consumer.DLQTopic,
 			Retry: kafka.RetryConfig{
-				MaxAttempts:  cfg.Kafka.RetryMaxAttempts,
-				InitialDelay: cfg.Kafka.RetryInitialDelay,
-				MaxDelay:     cfg.Kafka.RetryMaxDelay,
+				MaxAttempts:  cfg.Kafka.Consumer.Retry.MaxAttempts,
+				InitialDelay: cfg.Kafka.Consumer.Retry.InitialDelay,
+				MaxDelay:     cfg.Kafka.Consumer.Retry.MaxDelay,
 			},
 		},
 	}
@@ -183,9 +183,9 @@ func RunConsumer(cfg *config.Config) error {
 		"connected to kafka",
 		"brokers", cfg.Kafka.Brokers,
 		"client_id", cfg.Kafka.ClientID,
-		"consumer_group", cfg.Kafka.ConsumerGroup,
-		"topic", cfg.Kafka.ConsumerTopics,
-		"topic_dlq", cfg.Kafka.DLQTopic,
+		"consumer_group", cfg.Kafka.Consumer.Group,
+		"topic", cfg.Kafka.Consumer.Topics,
+		"topic_dlq", cfg.Kafka.Consumer.DLQTopic,
 	)
 
 	kafkaConsumer := kafka.NewConsumer(kafkaClient)

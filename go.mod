@@ -3,7 +3,7 @@ module github.com/disillusioned-labs/audit
 go 1.25.12
 
 require (
-	github.com/disillusioned-labs/platform v0.1.1
+	github.com/disillusioned-labs/platform v0.1.2
 	github.com/exaring/otelpgx v0.11.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0

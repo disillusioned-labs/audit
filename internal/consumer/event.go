@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
-	"strconv"
 
 	"github.com/disillusioned-labs/audit/internal/service/audit"
 	"github.com/disillusioned-labs/platform/kafka"
-	"github.com/google/uuid"
 )
 
 const (
@@ -28,17 +26,17 @@ func decodeAuditEvent(
 		)
 	}
 
-	eventID, err := requiredUUIDHeader(record.Headers, headerEventID)
+	eventID, err := kafka.RequiredUUIDHeader(record.Headers, headerEventID)
 	if err != nil {
 		return audit.CreateAuditEventInput{}, err
 	}
 
-	eventVersion, err := requiredIntHeader(record.Headers, headerEventVersion)
+	eventVersion, err := kafka.RequiredIntHeader(record.Headers, headerEventVersion)
 	if err != nil {
 		return audit.CreateAuditEventInput{}, err
 	}
 
-	sourceService, err := requiredHeader(
+	sourceService, err := kafka.RequiredHeader(
 		record.Headers,
 		headerSourceService,
 	)
@@ -46,7 +44,7 @@ func decodeAuditEvent(
 		return audit.CreateAuditEventInput{}, err
 	}
 
-	aggregateType, err := requiredHeader(
+	aggregateType, err := kafka.RequiredHeader(
 		record.Headers,
 		headerAggregateType,
 	)
@@ -54,7 +52,7 @@ func decodeAuditEvent(
 		return audit.CreateAuditEventInput{}, err
 	}
 
-	aggregateID, err := requiredUUIDHeader(
+	aggregateID, err := kafka.RequiredUUIDHeader(
 		record.Headers,
 		headerAggregateID,
 	)
@@ -81,79 +79,10 @@ func decodeAuditEvent(
 		IPAddress: parseIP(recordData["ip_address"]),
 		UserAgent: optionalString(recordData["user_agent"]),
 
-		TraceID: optionalHeader(record.Headers, "trace-id"),
+		TraceID: kafka.OptionalHeader(record.Headers, "trace-id"),
 
 		Details: record.Value,
 	}, nil
-}
-
-func requiredHeader(
-	headers []kafka.RecordHeader,
-	key string,
-) (string, error) {
-	value, ok := kafka.HeaderString(headers, key)
-	if !ok || value == "" {
-		return "", fmt.Errorf(
-			"missing required header %q",
-			key,
-		)
-	}
-
-	return value, nil
-}
-
-func requiredUUIDHeader(
-	headers []kafka.RecordHeader,
-	key string,
-) (uuid.UUID, error) {
-	value, err := requiredHeader(headers, key)
-	if err != nil {
-		return uuid.Nil, err
-	}
-
-	id, err := uuid.Parse(value)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf(
-			"invalid header %q: %w",
-			key,
-			err,
-		)
-	}
-
-	return id, nil
-}
-
-func requiredIntHeader(
-	headers []kafka.RecordHeader,
-	key string,
-) (int, error) {
-	value, err := requiredHeader(headers, key)
-	if err != nil {
-		return 0, err
-	}
-
-	version, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf(
-			"invalid header %q: %w",
-			key,
-			err,
-		)
-	}
-
-	return version, nil
-}
-
-func optionalHeader(
-	headers []kafka.RecordHeader,
-	key string,
-) *string {
-	value, ok := kafka.HeaderString(headers, key)
-	if !ok || value == "" {
-		return nil
-	}
-
-	return &value
 }
 
 func optionalString(value string) *string {
