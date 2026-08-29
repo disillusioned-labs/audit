@@ -7,6 +7,7 @@ import (
 
 	"github.com/disillusioned-labs/audit/internal/service/audit"
 	"github.com/disillusioned-labs/platform/kafka"
+	"github.com/google/uuid"
 )
 
 const (
@@ -16,6 +17,16 @@ const (
 	headerAggregateType = "aggregate-type"
 	headerAggregateID   = "aggregate-id"
 )
+
+type auditPayload struct {
+	ActorID        string `json:"actor_id"`
+	UserID         string `json:"user_id"`
+	TenantID       string `json:"tenant_id"`
+	OrganizationID string `json:"organization_id"`
+	Status         string `json:"status"`
+	IPAddress      string `json:"ip_address"`
+	UserAgent      string `json:"user_agent"`
+}
 
 func decodeAuditEvent(
 	record kafka.Record,
@@ -60,12 +71,22 @@ func decodeAuditEvent(
 		return audit.CreateAuditEventInput{}, err
 	}
 
-	var recordData map[string]string
-	if err := json.Unmarshal(record.Value, &recordData); err != nil {
+	var payload auditPayload
+	if err := json.Unmarshal(record.Value, &payload); err != nil {
 		return audit.CreateAuditEventInput{}, fmt.Errorf(
 			"unmarshal record value: %w",
 			err,
 		)
+	}
+
+	actorID := parseUUID(payload.ActorID)
+	if actorID == nil {
+		actorID = parseUUID(payload.UserID)
+	}
+
+	tenantID := parseUUID(payload.TenantID)
+	if tenantID == nil {
+		tenantID = parseUUID(payload.OrganizationID)
 	}
 
 	return audit.CreateAuditEventInput{
@@ -76,8 +97,12 @@ func decodeAuditEvent(
 		AggregateType: aggregateType,
 		AggregateID:   aggregateID,
 
-		IPAddress: parseIP(recordData["ip_address"]),
-		UserAgent: optionalString(recordData["user_agent"]),
+		ActorID:  actorID,
+		TenantID: tenantID,
+		Status:   optionalString(payload.Status),
+
+		IPAddress: parseIP(payload.IPAddress),
+		UserAgent: optionalString(payload.UserAgent),
 
 		TraceID: kafka.OptionalHeader(record.Headers, "trace-id"),
 
@@ -91,6 +116,19 @@ func optionalString(value string) *string {
 	}
 
 	return &value
+}
+
+func parseUUID(value string) *uuid.UUID {
+	if value == "" {
+		return nil
+	}
+
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return nil
+	}
+
+	return &id
 }
 
 func parseIP(value string) *netip.Addr {
