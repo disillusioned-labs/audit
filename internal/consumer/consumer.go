@@ -109,10 +109,7 @@ func (c *Consumer) processWithRetry(
 	ctx context.Context,
 	record kafka.Record,
 ) error {
-	ctx, span := tracer.Start(
-		ctx,
-		"audit.consumer.process",
-	)
+	ctx, span := tracer.Start(ctx, "audit.consumer.process")
 	defer span.End()
 
 	start := time.Now()

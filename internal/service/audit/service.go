@@ -6,7 +6,7 @@ import (
 
 	"github.com/disillusioned-labs/audit/internal/repository"
 	"github.com/disillusioned-labs/audit/internal/service"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/disillusioned-labs/platform/pgutil"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -50,27 +50,19 @@ func (s *auditService) Create(
 	)
 
 	if input.ActorType != nil {
-		span.SetAttributes(
-			attribute.String("audit_event.actor_type", *input.ActorType),
-		)
+		span.SetAttributes(attribute.String("audit_event.actor_type", *input.ActorType),)
 	}
 
 	if input.ActorID != nil {
-		span.SetAttributes(
-			attribute.String("audit_event.actor_id", input.ActorID.String()),
-		)
+		span.SetAttributes(attribute.String("audit_event.actor_id", input.ActorID.String()),)
 	}
 
 	if input.TenantID != nil {
-		span.SetAttributes(
-			attribute.String("audit_event.tenant_id", input.TenantID.String()),
-		)
+		span.SetAttributes(attribute.String("audit_event.tenant_id", input.TenantID.String()),)
 	}
 
 	if input.Status != nil {
-		span.SetAttributes(
-			attribute.String("audit_event.status", *input.Status),
-		)
+		span.SetAttributes(attribute.String("audit_event.status", *input.Status),)
 	}
 
 	err := s.repo.ExecTx(ctx, func(q repository.Querier) error {
@@ -94,9 +86,7 @@ func (s *auditService) Create(
 		}
 
 		if processed {
-			span.SetAttributes(
-				attribute.Bool("audit_event.already_processed", true),
-			)
+			span.SetAttributes(attribute.Bool("audit_event.already_processed", true),)
 
 			s.log.DebugContext(
 				ctx,
@@ -142,19 +132,19 @@ func (s *auditService) Create(
 				EventVersion:  int32(input.EventVersion),
 				SourceService: input.SourceService,
 
-				ActorType: nullableText(input.ActorType),
+				ActorType: pgutil.Text(input.ActorType),
 				ActorID:   input.ActorID,
 
 				AggregateType: input.AggregateType,
 				AggregateID:   input.AggregateID,
 
 				TenantID: input.TenantID,
-				Status:   nullableText(input.Status),
+				Status:   pgutil.Text(input.Status),
 
 				IpAddress: input.IPAddress,
-				UserAgent: nullableText(input.UserAgent),
+				UserAgent: pgutil.Text(input.UserAgent),
 
-				TraceID: nullableText(input.TraceID),
+				TraceID: pgutil.Text(input.TraceID),
 				Details: input.Details,
 			},
 		)
@@ -216,13 +206,4 @@ func (s *auditService) Create(
 	return nil
 }
 
-func nullableText(value *string) pgtype.Text {
-	if value == nil {
-		return pgtype.Text{}
-	}
 
-	return pgtype.Text{
-		String: *value,
-		Valid:  true,
-	}
-}
