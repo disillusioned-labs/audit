@@ -68,6 +68,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		records, err := c.kafkaConsumer.Poll(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
+				c.commitPending()
 				return nil
 			}
 
@@ -76,6 +77,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 		for _, record := range records {
 			if err := c.processWithRetry(recordContext(ctx, record), record); err != nil {
+				c.commitPending()
 				return fmt.Errorf(
 					"process kafka record topic=%s partition=%d offset=%d: %w",
 					record.Topic,
@@ -93,6 +95,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 					)
 				}
 
+				c.commitPending()
 				return fmt.Errorf(
 					"commit kafka record topic=%s partition=%d offset=%d: %w",
 					record.Topic,
@@ -102,6 +105,17 @@ func (c *Consumer) Run(ctx context.Context) error {
 				)
 			}
 		}
+	}
+}
+
+// commitPending flushes any processed-but-uncommitted offsets to the broker.
+// It uses a fresh context because the caller's context is already cancelled.
+func (c *Consumer) commitPending() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := c.kafkaConsumer.CommitUncommitted(ctx); err != nil {
+		c.log.Error("failed to commit pending offsets during shutdown", "error", err)
 	}
 }
 
