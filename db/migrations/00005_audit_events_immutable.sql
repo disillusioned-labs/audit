@@ -2,21 +2,25 @@
 
 -- audit_events is append-only, enforced by the database rather than by the
 -- absence of a query: every UPDATE and DELETE raises, regardless of which
--- role executes it. Retention is a purge job decision, not an ad-hoc
--- mutation - if retention ever arrives it must run as superuser explicitly
--- dropping partitions/rows with this trigger disabled by a reviewed change.
+-- role executes it. Retention is a purge job decision, not an ad-hoc mutation -
+-- if retention ever arrives it must run as superuser explicitly dropping
+-- partitions/rows with this trigger disabled by a reviewed change.
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION prevent_audit_event_mutation()
-RETURNS trigger AS $audit$
+RETURNS trigger
+LANGUAGE plpgsql
+AS $audit$
 BEGIN
     RAISE EXCEPTION 'audit_events is append-only: % blocked', TG_OP;
 END;
-$audit$ LANGUAGE plpgsql;
+$audit$;
+-- +goose StatementEnd
 
 CREATE TRIGGER audit_events_immutable
     BEFORE UPDATE OR DELETE ON audit_events
-FOR EACH ROW
-EXECUTE FUNCTION prevent_audit_event_mutation();
+    FOR EACH ROW
+    EXECUTE FUNCTION prevent_audit_event_mutation();
 
 -- +goose Down
 
