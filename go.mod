@@ -1,15 +1,15 @@
 module github.com/disillusioned-labs/audit
 
-go 1.25.12
+go 1.26.0
 
 require (
 	github.com/disillusioned-labs/platform v0.6.0
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/spf13/viper v1.21.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/metric v1.46.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 )
 
 require (
