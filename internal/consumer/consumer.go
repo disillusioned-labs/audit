@@ -72,12 +72,20 @@ func (c *Consumer) Run(ctx context.Context) error {
 				return nil
 			}
 
+			if kafka.IsTransientError(err) {
+				c.log.Warn(
+					"kafka poll failed, retrying",
+					"error", err,
+				)
+
+				continue
+			}
+
 			return fmt.Errorf("poll kafka: %w", err)
 		}
 
 		for _, record := range records {
 			if err := c.processWithRetry(recordContext(ctx, record), record); err != nil {
-				c.commitPending()
 				return fmt.Errorf(
 					"process kafka record topic=%s partition=%d offset=%d: %w",
 					record.Topic,
@@ -95,7 +103,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 					)
 				}
 
-				c.commitPending()
 				return fmt.Errorf(
 					"commit kafka record topic=%s partition=%d offset=%d: %w",
 					record.Topic,
