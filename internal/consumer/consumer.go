@@ -25,6 +25,7 @@ type Consumer struct {
 	retryPolicy   retry.RetryPolicy
 	metrics       *ConsumerMetrics
 	log           *slog.Logger
+	onProgress    func()
 }
 
 func NewConsumer(
@@ -34,6 +35,7 @@ func NewConsumer(
 	retryPolicy retry.RetryPolicy,
 	metrics *ConsumerMetrics,
 	log *slog.Logger,
+	onProgress func(),
 ) *Consumer {
 	return &Consumer{
 		kafkaConsumer: kafkaConsumer,
@@ -42,6 +44,7 @@ func NewConsumer(
 		retryPolicy:   retryPolicy,
 		metrics:       metrics,
 		log:           log,
+		onProgress:    onProgress,
 	}
 }
 
@@ -68,7 +71,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 		records, err := c.kafkaConsumer.Poll(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
-				c.commitPending()
 				return nil
 			}
 
@@ -77,15 +79,34 @@ func (c *Consumer) Run(ctx context.Context) error {
 					"kafka poll failed, retrying",
 					"error", err,
 				)
-
+				if err := c.retryPolicy.Wait(ctx, 1); err != nil {
+					return nil
+				}
 				continue
 			}
 
 			return fmt.Errorf("poll kafka: %w", err)
 		}
+		if records == nil {
+			return fmt.Errorf("kafka consumer closed")
+		}
+
+		// An empty successful poll is healthy even when the topic is idle.
+		if len(records) == 0 && c.onProgress != nil {
+			c.onProgress()
+		}
 
 		for _, record := range records {
-			if err := c.processWithRetry(recordContext(ctx, record), record); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			processCtx, cancel := recordContext(ctx, record)
+			err := c.processWithRetry(processCtx, record)
+			cancel()
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil // Leave this record uncommitted for replay.
+				}
 				return fmt.Errorf(
 					"process kafka record topic=%s partition=%d offset=%d: %w",
 					record.Topic,
@@ -95,7 +116,11 @@ func (c *Consumer) Run(ctx context.Context) error {
 				)
 			}
 
-			if err := c.kafkaConsumer.CommitRecords(ctx, record); err != nil {
+			// Bound the commit, but let an already-finished write commit after SIGTERM.
+			commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			err = c.kafkaConsumer.CommitRecords(commitCtx, record)
+			cancel()
+			if err != nil {
 				if c.metrics != nil {
 					c.metrics.recordCommitFailed(
 						ctx,
@@ -111,18 +136,13 @@ func (c *Consumer) Run(ctx context.Context) error {
 					err,
 				)
 			}
+			if c.onProgress != nil {
+				c.onProgress()
+			}
+			if ctx.Err() != nil {
+				return nil
+			}
 		}
-	}
-}
-
-// commitPending flushes any processed-but-uncommitted offsets to the broker.
-// It uses a fresh context because the caller's context is already cancelled.
-func (c *Consumer) commitPending() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := c.kafkaConsumer.CommitUncommitted(ctx); err != nil {
-		c.log.Error("failed to commit pending offsets during shutdown", "error", err)
 	}
 }
 
@@ -357,11 +377,16 @@ func recordEventType(record kafka.Record) string {
 	return value
 }
 
-// recordContext continues the trace the producer injected into the record
-// headers; records without one fall back to the poll loop's context.
-func recordContext(ctx context.Context, record kafka.Record) context.Context {
+// recordContext preserves the extracted trace and propagates shutdown to the
+// record context, which franz-go starts from context.Background.
+func recordContext(ctx context.Context, record kafka.Record) (context.Context, context.CancelFunc) {
 	if record.Context != nil {
-		return record.Context
+		processCtx, cancel := context.WithCancel(record.Context)
+		stop := context.AfterFunc(ctx, cancel)
+		return processCtx, func() {
+			stop()
+			cancel()
+		}
 	}
-	return ctx
+	return ctx, func() {}
 }

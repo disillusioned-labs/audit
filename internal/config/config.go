@@ -17,7 +17,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
+	"time"
 
 	platformconfig "github.com/disillusioned-labs/platform/config"
 	"github.com/spf13/viper"
@@ -28,8 +31,31 @@ type Config struct {
 	Service  platformconfig.ServiceConfig  `mapstructure:"service"`
 	Postgres platformconfig.PostgresConfig `mapstructure:"postgres"`
 	Kafka    platformconfig.KafkaConfig    `mapstructure:"kafka"`
+	Health   HealthConfig                  `mapstructure:"health"`
 	OTel     platformconfig.OTelConfig     `mapstructure:"otel"`
 	Log      platformconfig.LogConfig      `mapstructure:"log"`
+}
+
+// HealthConfig controls the probe listener and worker progress threshold.
+type HealthConfig struct {
+	HTTPAddr    *string        `mapstructure:"http_addr"`
+	ReadyMaxAge *time.Duration `mapstructure:"ready_max_age"`
+}
+
+// Address keeps configs built in code usable without a local .env file.
+func (c HealthConfig) Address() string {
+	if c.HTTPAddr == nil {
+		return ":8084"
+	}
+	return *c.HTTPAddr
+}
+
+// MaxAge keeps configs built in code usable without a local .env file.
+func (c HealthConfig) MaxAge() time.Duration {
+	if c.ReadyMaxAge == nil {
+		return 90 * time.Second
+	}
+	return *c.ReadyMaxAge
 }
 
 // DotEnvFile is the optional local overrides file, loaded from the working
@@ -95,6 +121,14 @@ func (c *Config) validate() error {
 	}
 	if err := platformconfig.ValidateKafka(&c.Kafka); err != nil {
 		errs = append(errs, err)
+	}
+	if c.Health.ReadyMaxAge != nil && *c.Health.ReadyMaxAge <= 0 {
+		fail("health.ready_max_age must be > 0, got %s", *c.Health.ReadyMaxAge)
+	}
+	if _, port, err := net.SplitHostPort(c.Health.Address()); err != nil {
+		fail("health.http_addr must be host:port, got %q: %v", c.Health.Address(), err)
+	} else if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		fail("health.http_addr must have a TCP port from 1 to 65535, got %q", c.Health.Address())
 	}
 
 	// Audit-specific: consumer fields.
@@ -199,6 +233,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kafka.consumer.retry.max_attempts", 3)
 	v.SetDefault("kafka.consumer.retry.initial_delay", "1s")
 	v.SetDefault("kafka.consumer.retry.max_delay", "30s")
+	v.SetDefault("health.http_addr", ":8084")
+	v.SetDefault("health.ready_max_age", "90s")
 
 	v.SetDefault("otel.sdk_disabled", false)
 	v.SetDefault("otel.traces_exporter", platformconfig.OTelExporterOTLP)

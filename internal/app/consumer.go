@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,10 +15,12 @@ import (
 	"github.com/disillusioned-labs/audit/internal/consumer"
 	"github.com/disillusioned-labs/audit/internal/repository"
 	"github.com/disillusioned-labs/audit/internal/service/audit"
+	"github.com/disillusioned-labs/platform/httpserver"
 	"github.com/disillusioned-labs/platform/kafka"
 	"github.com/disillusioned-labs/platform/postgres"
 	"github.com/disillusioned-labs/platform/retry"
 	"github.com/disillusioned-labs/platform/telemetry"
+	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/sync/errgroup"
 
@@ -173,7 +176,17 @@ func RunConsumer(cfg *config.Config) error {
 		},
 	}
 
-	kafkaClient, err := kafka.New(ctx, kafkaCfg)
+	// platform v0.7.0 commits every fetched offset on revocation. This worker
+	// commits each record only after its audit write or DLQ publish succeeds;
+	// committing the rest of a fetched batch would silently skip events.
+	health := &consumerHealth{
+		maxAge:   cfg.Health.MaxAge(),
+		assigned: make(map[string]map[int32]struct{}),
+	}
+	kafkaClient, err := kafka.New(ctx, kafkaCfg,
+		kgo.OnPartitionsAssigned(health.onAssigned),
+		kgo.OnPartitionsRevoked(health.onRevoked),
+	)
 	if err != nil {
 		return fmt.Errorf("connect kafka: %w", err)
 	}
@@ -230,10 +243,40 @@ func RunConsumer(cfg *config.Config) error {
 		retryPolicy,
 		consumerMetrics,
 		log,
+		health.progress,
 	)
+	healthServer, err := httpserver.New(
+		health.handler(kafkaClient, pool.Ping),
+		httpserver.WithAddress(cfg.Health.Address()),
+		httpserver.WithReadHeaderTimeout(2*time.Second),
+		httpserver.WithReadTimeout(3*time.Second),
+		httpserver.WithWriteTimeout(2*time.Second),
+		httpserver.WithIdleTimeout(5*time.Second),
+		httpserver.WithMaxHeaderBytes(8<<10),
+	)
+	if err != nil {
+		return fmt.Errorf("configure health probes: %w", err)
+	}
+	// No Service or Ingress is needed: kubelet probes the Pod IP directly.
+	listener, err := net.Listen("tcp", healthServer.Address())
+	if err != nil {
+		return fmt.Errorf("listen for health probes: %w", err)
+	}
 
 	g, runCtx := errgroup.WithContext(ctx)
-
+	g.Go(func() error {
+		if err := healthServer.Serve(listener); err != nil {
+			return fmt.Errorf("serve health probes: %w", err)
+		}
+		return nil
+	})
+	g.Go(func() error {
+		<-runCtx.Done()
+		health.draining.Store(true)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		return healthServer.Shutdown(shutdownCtx)
+	})
 	g.Go(func() error {
 		return consumer.Run(runCtx)
 	})

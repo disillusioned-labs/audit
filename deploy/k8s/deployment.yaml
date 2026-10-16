@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: audit-consumer
+spec:
+  replicas: 1
+  minReadySeconds: 30
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: audit-consumer
+  template:
+    metadata:
+      labels:
+        app: audit-consumer
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: consumer
+          # Replace with an immutable digest from the image built by audit/Dockerfile.
+          image: registry.example.com/audit@sha256:REPLACE_WITH_IMAGE_DIGEST
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: audit-consumer-config
+            - secretRef:
+                name: audit-consumer-secrets
+          ports:
+            - name: health
+              containerPort: 8084
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
